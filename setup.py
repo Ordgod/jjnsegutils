@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="jjnsegutils", # Replace with your own username
-    version="0.0.7",
+    version="0.0.10",
     author="Jingnan",
     author_email="jiajingnan2222@gmail.com",
     description="A package of common utilities for Medical images segmentation and evaluation.",
