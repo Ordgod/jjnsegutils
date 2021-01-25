@@ -73,8 +73,8 @@ def get_all_ct_names(path, number=None, prefix=None):
         files = glob.glob(path + '/*' + '.nrrd')
         files.extend(glob.glob(path + '/*' + '.mhd'))
         files.extend(glob.glob(path + '/*' + '.mha'))
-        files.extend(glob.glob(path + '/' + prefix + '*.nii'))
-        files.extend(glob.glob(path + '/' + prefix + '*.nii.gz'))
+        files.extend(glob.glob(path + '/*' + '.nii'))
+        files.extend(glob.glob(path + '/*' + '.nii.gz'))
 
     scan_files = sorted(files)
     if scan_files is None:
