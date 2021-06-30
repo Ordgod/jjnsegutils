@@ -5,6 +5,7 @@ Possible functions on loading, saving, processing itk files.
 Created on Tue Apr  4 09:35:14 2017
 @author: fferreira and Jingnan
 """
+
 import csv
 import glob
 import os
@@ -14,8 +15,174 @@ import SimpleITK as sitk
 import nibabel as nib
 import nrrd
 import numpy as np
+import pandas as pd
+import pingouin as pg
 from scipy import ndimage
 from skimage.io import imsave
+
+
+def appendrows_to(fpath: str, data: np.ndarray, head=None):
+    if not os.path.isfile(fpath) and head is not None:
+        with open(fpath, 'a') as csv_file:
+            writer = csv.writer(csv_file, delimiter=',')
+            writer.writerow(head)
+
+    with open(fpath, 'a') as csv_file:
+        writer = csv.writer(csv_file, delimiter=',')
+        if len(data.shape) == 1:  # when data.shape==(-1,)  which means data batch size = 1
+            writer.writerow(data)
+            # data = data.reshape(-1, 1)
+        else:
+            writer.writerows(data)
+
+
+def icc(label_fpath, pred_fpath):
+    icc_dict = {}
+
+    label = pd.read_csv(label_fpath)
+    pred = pd.read_csv(pred_fpath)
+    if 'ID' == label.columns[0]:
+        del label["ID"]
+    if "Level" == label.columns[0]:
+        del label["Level"]
+    if 'ID' == pred.columns[0]:
+        del pred["ID"]
+    if "Level" == pred.columns[0]:
+        del pred["Level"]
+    original_columns = label.columns
+
+    # if len(label.columns) == 3:
+    #     columns = ['disext', 'gg', 'retp']
+    # elif len(label.columns) == 5:
+    #     columns = ['L1', 'L2', 'L3', 'L4', 'L5']
+    # else:
+    #     raise Exception('wrong task')
+
+    # label.columns = columns
+    # pred.columns = columns
+    ori_columns = list(label.columns)
+
+    label['ID'] = np.arange(1, len(label) + 1)
+    label['rater'] = 'label'
+
+    pred['ID'] = np.arange(1, len(pred) + 1)
+    pred['rater'] = 'pred'
+
+    data = pd.concat([label, pred], axis=0)
+
+    for column in original_columns:
+        icc = pg.intraclass_corr(data=data, targets='ID', raters='rater', ratings=column).round(2)
+        icc = icc.set_index("Type")
+        icc = icc.loc['ICC2']['ICC']
+        prefix = label_fpath.split("/")[-1].split("_")[0]
+        icc_dict['icc_' + prefix + '_' + column] = icc
+
+    column = "combined"
+    label_all = pd.DataFrame(dtype='float')
+    pred_all = pd.DataFrame(dtype='float')
+
+    pred_all['combined'] = pd.concat([pred[i] for i in ori_columns], axis=0).astype(float)
+    label_all['combined'] = pd.concat([label[i] for i in ori_columns], axis=0).astype(float)
+
+    label_all['ID'] = np.arange(1, len(label_all) + 1)
+    label_all['rater'] = 'label'
+
+    pred_all['ID'] = np.arange(1, len(pred_all) + 1)
+    pred_all['rater'] = 'pred'
+
+    data_all = pd.concat([label_all, pred_all], axis=0)
+    icc = pg.intraclass_corr(data=data_all, targets='ID', raters='rater', ratings=column).round(2)
+    icc = icc.set_index("Type")
+    icc = icc.loc['ICC2']['ICC']
+    prefix = label_fpath.split("/")[-1].split("_")[0]
+    icc_dict['icc_all' + prefix + '_' + column] = icc
+    return icc_dict
+
+
+def count_parameters(model):
+    total_params = 0
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        param = parameter.numel()
+        total_params += param
+    print(f"Total Trainable Params: {total_params}")
+    return total_params
+
+
+def flip_axis(x, axis):
+    x = np.asarray(x).swapaxes(axis, 0)
+    x = x[::-1, ...]
+    x = x.swapaxes(0, axis)
+    return x
+
+
+def get_all_ct_names(path, number=None, prefix=None, name_suffix=None):
+    suffix_list = [".nrrd", ".mhd", ".mha", ".nii", ".nii.gz"]  # todo: more suffix
+
+    if prefix and name_suffix:
+        files = glob.glob(path + '/' + prefix + "*" + name_suffix + suffix_list[0])
+        for suffix in suffix_list[1:]:
+            files.extend(glob.glob(path + '/' + prefix + "*" + name_suffix + suffix))
+    elif prefix:
+        files = glob.glob(path + '/' + prefix + "*" + suffix_list[0])
+        for suffix in suffix_list[1:]:
+            files.extend(glob.glob(path + '/' + prefix + "*" + suffix))
+    elif name_suffix:
+        if 'SSc' in path:
+            files = glob.glob(path + '/*/' + "*" + name_suffix + '.mha')
+        else:
+            files = glob.glob(path + '/' + "*" + name_suffix + suffix_list[0])
+            for suffix in suffix_list[1:]:
+                files.extend(glob.glob(path + '/' + "*" + name_suffix + suffix))
+
+    else:
+        files = glob.glob(path + '/*' + suffix_list[0])
+        for suffix in suffix_list[1:]:
+            files.extend(glob.glob(path + '/*' + suffix))
+
+    scan_files = sorted(files)
+    if len(scan_files) == 0:
+        raise Exception('Scan files are None, please check the data directory')
+    if isinstance(number, int) and number != 0:
+        scan_files = scan_files[:number]
+    elif isinstance(number, list):  # number = [3,7]
+        scan_files = scan_files[number[0]:number[1]]
+
+    return scan_files
+
+
+def get_ct_pair_filenames(gdth_path, pred_path):
+    gdth_files = get_all_ct_names(gdth_path)
+    pred_files = get_all_ct_names(pred_path)
+
+    if len(gdth_files) == 0:
+        raise Exception('ground truth files  are None, Please check the directories', gdth_path)
+    if len(pred_files) == 0:
+        raise Exception(' predicted files are None, Please check the directories', pred_path)
+
+    if any(['fissure' in file for file in pred_files]):  # check no fissure files are included
+        fissure_gdth, fissure_pred = get_fissure_filenames(gdth_path, pred_path)
+        gdth_files = set(gdth_files) - set(fissure_gdth)
+        pred_files = set(pred_files) - set(fissure_pred)
+    gdth_files, pred_files = get_intersection_files(gdth_files, pred_files)
+
+    return gdth_files, pred_files
+
+
+def recall(seg, gt):
+    im1 = np.asarray(seg > 0).astype(np.bool)
+    im2 = np.asarray(gt > 0).astype(np.bool)
+
+    if im1.shape != im2.shape:
+        raise ValueError("Shape mismatch: im1 and im2 must have the same shape.")
+
+    intersection = np.logical_and(im1, im2).astype(float)
+
+    if im2.sum() > 0:
+        return intersection.sum() / (im2.sum())
+    else:
+        return 1.0
 
 
 def get_fissure_filenames(gdth_path, pred_path, fissureradius=0):
@@ -62,55 +229,6 @@ def get_intersection_files(gdth_files, pred_files):
     return sorted(new_gdth_files), sorted(new_pred_files)
 
 
-def get_all_ct_names(path, number=None, prefix=None, postfix=None):
-    if prefix:
-        files = glob.glob(path + '/' + prefix + '*.nrrd')
-        files.extend(glob.glob(path + '/' + prefix + '*.mhd'))
-        files.extend(glob.glob(path + '/' + prefix + '*.mha'))
-        files.extend(glob.glob(path + '/' + prefix + '*.nii'))
-        files.extend(glob.glob(path + '/' + prefix + '*.nii.gz'))
-    if postfix:
-        files = glob.glob(path + '/*' + postfix + '.nrrd')
-        files.extend(glob.glob(path + '/*' + postfix + '.mhd'))
-        files.extend(glob.glob(path + '/*' + postfix + '.mha'))
-        files.extend(glob.glob(path + '/*' + postfix + '.nii'))
-        files.extend(glob.glob(path + '/*' + postfix + '.nii.gz'))
-
-    else:
-        files = glob.glob(path + '/*' + '.nrrd')
-        files.extend(glob.glob(path + '/*' + '.mhd'))
-        files.extend(glob.glob(path + '/*' + '.mha'))
-        files.extend(glob.glob(path + '/*' + '.nii'))
-        files.extend(glob.glob(path + '/*' + '.nii.gz'))
-
-    scan_files = sorted(files)
-    if scan_files is None:
-        raise Exception('Scan files are None, please check the data directory')
-    if isinstance(number, int):
-        scan_files = scan_files[:number]
-    elif isinstance(number, list):  # number = [3,7]
-        scan_files = scan_files[number[0]:number[1]]
-
-    return scan_files
-
-
-def get_ct_pair_filenames(gdth_path, pred_path):
-    gdth_files = get_all_ct_names(gdth_path)
-    pred_files = get_all_ct_names(pred_path)
-
-    if len(gdth_files) == 0:
-        raise Exception('ground truth files  are None, Please check the directories', gdth_path)
-    if len(pred_files) == 0:
-        raise Exception(' predicted files are None, Please check the directories', pred_path)
-
-    fissure_gdth, fissure_pred = get_fissure_filenames(gdth_path, pred_path)
-    gdth_files = set(gdth_files) - set(fissure_gdth)
-    pred_files = set(pred_files) - set(fissure_pred)
-    gdth_files, pred_files = get_intersection_files(gdth_files, pred_files)
-
-    return gdth_files, pred_files
-
-
 def get_gdth_pred_names(gdth_path, pred_path, fissure=False, fissureradius=1):
     if fissure:
         gdth_files, pred_files = get_fissure_filenames(gdth_path, pred_path, fissureradius=fissureradius)
@@ -133,7 +251,7 @@ def load_itk(filename):
         itkimage = sitk.ReadImage(filename)
 
     else:
-        raise FileNotFoundError("image" + filename+ " was not found")
+        raise FileNotFoundError("image" + filename + " was not found")
 
     # Convert the image to a  numpy array first ands then shuffle the dimensions to get axis in the order z,y,x
     ct_scan = sitk.GetArrayFromImage(itkimage)
@@ -218,22 +336,6 @@ def normalize(image, min_=-1000.0, max_=400.0):
     image[image < 0] = 0.
 
     return image
-
-
-# %%
-def recall(seg, gt):
-    im1 = np.asarray(seg > 0).astype(np.bool)
-    im2 = np.asarray(gt > 0).astype(np.bool)
-
-    if im1.shape != im2.shape:
-        raise ValueError("Shape mismatch: im1 and im2 must have the same shape.")
-
-    intersection = np.logical_and(im1, im2).astype(float)
-
-    if im2.sum() > 0:
-        return intersection.sum() / (im2.sum())
-    else:
-        return 1.0
 
 
 def one_hot_decoding(img, labels, thresh=None):
@@ -433,13 +535,9 @@ def execute_the_function_multi_thread(consumer, workers=10):
     thd_list = []
     mylock = threading.Lock()
     for i in range(workers):
-        thd = threading.Thread(target=consumer, args=(mylock, ))
+        thd = threading.Thread(target=consumer, args=(mylock,))
         thd.start()
         thd_list.append(thd)
 
     for thd in thd_list:
         thd.join()
-
-
-def fun_a():
-    pass
