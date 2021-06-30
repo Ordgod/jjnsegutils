@@ -1,0 +1,6 @@
+pingouin
+SimpleITK
+nibabel
+pingouin
+scipy
+

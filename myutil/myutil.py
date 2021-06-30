@@ -13,12 +13,10 @@ import threading
 
 import SimpleITK as sitk
 import nibabel as nib
-import nrrd
 import numpy as np
 import pandas as pd
 import pingouin as pg
 from scipy import ndimage
-from skimage.io import imsave
 
 
 def appendrows_to(fpath: str, data: np.ndarray, head=None):
@@ -292,21 +290,6 @@ def save_itk(filename, scan, origin, spacing, dtype='int16'):
     writer.Execute(stk, filename, True)
 
 
-# %%
-
-def load_nrrd(filename):
-    """
-    Load .nrrd file using package nrrd. Can be replaced by function load_itk().
-
-    :param filename: absolute file path
-    :return: array of ct, origin and spacing with shape (z, y, x)
-    """
-    readdata, options = nrrd.read(filename)
-    origin = np.array(options['space origin']).astype(float)
-    spacing = np.array(options['space directions']).astype(float)
-    spacing = np.sum(spacing, axis=0)
-    return np.transpose(np.array(readdata).astype(float)), origin[::-1], spacing[
-                                                                         ::-1]  # all of them has coordinate (z,y,x)
 
 
 # %% Save in _nii.gz format
@@ -314,11 +297,6 @@ def save_nii(dirname, savefilename, lung_mask):
     array_img = nib.Nifti1Image(lung_mask, affine=None, header=None)
     nib.save(array_img, os.path.join(dirname, savefilename))
 
-
-def save_slice_img(folder, scan, uid):
-    print(uid, scan.shape[0])
-    for i, s in enumerate(scan):
-        imsave(os.path.join(folder, uid + 'sl_' + str(i) + '.png'), s)
 
 
 # %%
