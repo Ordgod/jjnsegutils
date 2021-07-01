@@ -288,7 +288,8 @@ def save_itk(filename, scan, origin, spacing, dtype='int16'):
     stk.SetSpacing(spacing[::-1])
 
     writer = sitk.ImageFileWriter()
-    writer.Execute(stk, filename, True)
+    writer.SetFileName(filename)
+    writer.Execute(stk)
 
 
 
