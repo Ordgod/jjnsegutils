@@ -236,8 +236,7 @@ def get_gdth_pred_names(gdth_path, pred_path, fissure=False, fissureradius=1):
     return gdth_files, pred_files
 
 
-# %%
-def load_itk(filename):
+def load_itk(filename, require_ori_sp=False):
     """
 
     :param filename: absolute file path
@@ -249,7 +248,7 @@ def load_itk(filename):
         itkimage = sitk.ReadImage(filename)
 
     else:
-        raise FileNotFoundError("image" + filename + " was not found")
+        raise FileNotFoundError("image" + filename+ " was not found")
 
     # Convert the image to a  numpy array first ands then shuffle the dimensions to get axis in the order z,y,x
     ct_scan = sitk.GetArrayFromImage(itkimage)
@@ -263,9 +262,11 @@ def load_itk(filename):
     orientation = itkimage.GetDirection()
     if orientation[-1] == -1:
         ct_scan = ct_scan[::-1]
-
-    return ct_scan, origin, spacing
-
+    if require_ori_sp:
+        return ct_scan, origin, spacing
+    else:
+        return ct_scan
+    
 
 # %%
 def save_itk(filename, scan, origin, spacing, dtype='int16'):
